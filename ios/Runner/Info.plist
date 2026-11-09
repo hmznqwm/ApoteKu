@@ -68,6 +68,8 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Aplikasi memerlukan akses kamera untuk pemindaian barcode obat.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Aplikasi memerlukan akses galeri untuk memilih dokumen atau data file.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Aplikasi memerlukan akses Bluetooth untuk menghubungkan printer thermal.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
