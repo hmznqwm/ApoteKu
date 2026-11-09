@@ -8,8 +8,9 @@ workflows:
       xcode: latest
       cocoapods: default
     scripts:
-      - name: Get Flutter packages
+      - name: Clean & Get Flutter packages
         script: |
+          flutter clean
           flutter packages pub get
       - name: Flutter build iOS (Unsigned Release)
         script: |
