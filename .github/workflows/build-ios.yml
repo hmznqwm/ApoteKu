@@ -24,13 +24,28 @@ jobs:
           flutter clean
           flutter pub get
 
-      - name: Patch Plugin Podspecs
+      - name: Patch Plugin Podspecs & Sources
         run: |
-          PUB_CACHE_DIR="$HOME/.pub-cache/hosted/pub.dev"
-          find "$PUB_CACHE_DIR" -type f -name "print_bluetooth_thermal.podspec" 2>/dev/null | while read -r f; do
-            dir="$(dirname "$f")"
-            sed "s/s\.name *= *['\"]print_bluetooth_thermal['\"]/s.name             = 'print_bluetooth_thermal_plus'/" "$f" > "$dir/print_bluetooth_thermal_plus.podspec"
-          done
+          python3 -c "
+          import glob, os
+
+          pub_cache = os.path.expanduser('~/.pub-cache/hosted/pub.dev')
+          for f in glob.glob(f'{pub_cache}/**/print_bluetooth_thermal.podspec', recursive=True):
+              target = os.path.join(os.path.dirname(f), 'print_bluetooth_thermal_plus.podspec')
+              with open(f, 'r') as fp:
+                  c = fp.read()
+              c = c.replace(\"s.name             = 'print_bluetooth_thermal'\", \"s.name             = 'print_bluetooth_thermal_plus'\")
+              with open(target, 'w') as fp:
+                  fp.write(c)
+
+          for f in glob.glob(f'{pub_cache}/**/PrintBluetoothThermalPlugin.m', recursive=True):
+              with open(f, 'r') as fp:
+                  c = fp.read()
+              c = c.replace('print_bluetooth_thermal-Swift.h', 'print_bluetooth_thermal_plus-Swift.h')
+              c = c.replace('<print_bluetooth_thermal/', '<print_bluetooth_thermal_plus/')
+              with open(f, 'w') as fp:
+                  fp.write(c)
+          "
 
       - name: Build iOS Release (Unsigned)
         run: |

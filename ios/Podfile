@@ -23,7 +23,7 @@ end
 
 require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
 
-# Patch print_bluetooth_thermal_plus podspec mismatch
+# Patch print_bluetooth_thermal_plus podspec and header mismatch
 plugin_ios_dir = File.expand_path('.symlinks/plugins/print_bluetooth_thermal_plus/ios', __dir__)
 if Dir.exist?(plugin_ios_dir)
   original_podspec = File.join(plugin_ios_dir, 'print_bluetooth_thermal.podspec')
@@ -33,6 +33,16 @@ if Dir.exist?(plugin_ios_dir)
     content.gsub!(/s\.name\s*=\s*['"]print_bluetooth_thermal['"]/, "s.name             = 'print_bluetooth_thermal_plus'")
     File.write(fixed_podspec, content)
     puts "--> Auto-patched print_bluetooth_thermal_plus.podspec"
+  end
+  m_file = File.join(plugin_ios_dir, 'Classes', 'PrintBluetoothThermalPlugin.m')
+  if File.exist?(m_file)
+    content = File.read(m_file)
+    if content.include?('print_bluetooth_thermal-Swift.h')
+      content.gsub!('print_bluetooth_thermal-Swift.h', 'print_bluetooth_thermal_plus-Swift.h')
+      content.gsub!('<print_bluetooth_thermal/', '<print_bluetooth_thermal_plus/')
+      File.write(m_file, content)
+      puts "--> Auto-patched PrintBluetoothThermalPlugin.m"
+    end
   end
 end
 

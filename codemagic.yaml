@@ -20,16 +20,31 @@ workflows:
         script: |
           flutter clean
           flutter packages pub get
-      - name: Patch plugin podspecs
+      - name: Patch plugin podspecs & sources
         script: |
-          echo "Checking for podspecs in pub cache..."
-          PUB_CACHE_DIR="$HOME/.pub-cache/hosted/pub.dev"
-          find "$PUB_CACHE_DIR" -type f -name "print_bluetooth_thermal.podspec" 2>/dev/null | while read -r f; do
-            dir="$(dirname "$f")"
-            sed "s/s\.name *= *['\"]print_bluetooth_thermal['\"]/s.name             = 'print_bluetooth_thermal_plus'/" "$f" > "$dir/print_bluetooth_thermal_plus.podspec"
-            echo "Created $dir/print_bluetooth_thermal_plus.podspec"
-          done
-          # Pre-create symlinks if needed
+          echo "Patching print_bluetooth_thermal_plus podspec and Objective-C imports..."
+          python3 -c "
+          import glob, os
+
+          pub_cache = os.path.expanduser('~/.pub-cache/hosted/pub.dev')
+          for f in glob.glob(f'{pub_cache}/**/print_bluetooth_thermal.podspec', recursive=True):
+              target = os.path.join(os.path.dirname(f), 'print_bluetooth_thermal_plus.podspec')
+              with open(f, 'r') as fp:
+                  c = fp.read()
+              c = c.replace(\"s.name             = 'print_bluetooth_thermal'\", \"s.name             = 'print_bluetooth_thermal_plus'\")
+              with open(target, 'w') as fp:
+                  fp.write(c)
+              print(f'Created {target}')
+
+          for f in glob.glob(f'{pub_cache}/**/PrintBluetoothThermalPlugin.m', recursive=True):
+              with open(f, 'r') as fp:
+                  c = fp.read()
+              c = c.replace('print_bluetooth_thermal-Swift.h', 'print_bluetooth_thermal_plus-Swift.h')
+              c = c.replace('<print_bluetooth_thermal/', '<print_bluetooth_thermal_plus/')
+              with open(f, 'w') as fp:
+                  fp.write(c)
+              print(f'Patched {f}')
+          "
           flutter precache --ios
       - name: Flutter build iOS (Unsigned Release)
         script: |
