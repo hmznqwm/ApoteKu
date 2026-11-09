@@ -24,6 +24,14 @@ jobs:
           flutter clean
           flutter pub get
 
+      - name: Patch Plugin Podspecs
+        run: |
+          PUB_CACHE_DIR="$HOME/.pub-cache/hosted/pub.dev"
+          find "$PUB_CACHE_DIR" -type f -name "print_bluetooth_thermal.podspec" 2>/dev/null | while read -r f; do
+            dir="$(dirname "$f")"
+            sed "s/s\.name *= *['\"]print_bluetooth_thermal['\"]/s.name             = 'print_bluetooth_thermal_plus'/" "$f" > "$dir/print_bluetooth_thermal_plus.podspec"
+          done
+
       - name: Build iOS Release (Unsigned)
         run: |
           flutter build ios --release --no-codesign

@@ -20,6 +20,17 @@ workflows:
         script: |
           flutter clean
           flutter packages pub get
+      - name: Patch plugin podspecs
+        script: |
+          echo "Checking for podspecs in pub cache..."
+          PUB_CACHE_DIR="$HOME/.pub-cache/hosted/pub.dev"
+          find "$PUB_CACHE_DIR" -type f -name "print_bluetooth_thermal.podspec" 2>/dev/null | while read -r f; do
+            dir="$(dirname "$f")"
+            sed "s/s\.name *= *['\"]print_bluetooth_thermal['\"]/s.name             = 'print_bluetooth_thermal_plus'/" "$f" > "$dir/print_bluetooth_thermal_plus.podspec"
+            echo "Created $dir/print_bluetooth_thermal_plus.podspec"
+          done
+          # Pre-create symlinks if needed
+          flutter precache --ios
       - name: Flutter build iOS (Unsigned Release)
         script: |
           flutter build ios --release --no-codesign
