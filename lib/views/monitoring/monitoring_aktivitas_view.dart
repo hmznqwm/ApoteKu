@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/activity_log_model.dart';
 import '../../providers/activity_log_provider.dart';
+import '../../services/sync_service.dart';
 import '../../widgets/app_confirm_dialog.dart';
 
 class MonitoringAktivitasView extends StatefulWidget {
@@ -79,7 +80,12 @@ class _MonitoringAktivitasViewState extends State<MonitoringAktivitasView> {
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: AppColors.textSecondary, size: 20),
             tooltip: 'Muat Ulang Log',
-            onPressed: () => provider.fetchLogs(),
+            onPressed: () async {
+              await SyncService.instance.syncAll();
+              if (context.mounted) {
+                await context.read<ActivityLogProvider>().fetchLogs();
+              }
+            },
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline_rounded, color: AppColors.danger, size: 20),
@@ -103,7 +109,12 @@ class _MonitoringAktivitasViewState extends State<MonitoringAktivitasView> {
       body: provider.isLoading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: () => provider.fetchLogs(),
+              onRefresh: () async {
+                await SyncService.instance.syncAll();
+                if (context.mounted) {
+                  await context.read<ActivityLogProvider>().fetchLogs();
+                }
+              },
               child: Scrollbar(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(16),

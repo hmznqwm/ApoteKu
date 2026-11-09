@@ -223,7 +223,8 @@ class _ProdukViewState extends State<ProdukView> {
                 },
               ),
             ),
-            SizedBox(height: isLandscape ? 6 : 10),
+            _buildGejalaPills(),
+            SizedBox(height: isLandscape ? 4 : 8),
 
             // Products Responsive List / Table
             Expanded(
@@ -254,6 +255,84 @@ class _ProdukViewState extends State<ProdukView> {
           ],
         ),
       ),
+      ),
+    );
+  }
+
+  Widget _buildGejalaPills() {
+    final produkProv = context.watch<ProdukProvider>();
+    final gejalaList = produkProv.allAvailableGejala;
+    final hasSelected = produkProv.selectedGejala.isNotEmpty;
+
+    return Container(
+      height: 36,
+      margin: const EdgeInsets.only(top: 4, bottom: 2),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: gejalaList.length + (hasSelected ? 1 : 0),
+        separatorBuilder: (context, index) => const SizedBox(width: 6),
+        itemBuilder: (context, idx) {
+          if (hasSelected && idx == 0) {
+            return InkWell(
+              onTap: () => produkProv.clearGejala(),
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFCBD5E1), width: 1.0),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Icon(Icons.close_rounded, size: 14, color: Color(0xFF475569)),
+                    SizedBox(width: 4),
+                    Text(
+                      'Reset',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF475569),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          final gIdx = hasSelected ? idx - 1 : idx;
+          final g = gejalaList[gIdx];
+          final isSelected = produkProv.selectedGejala.contains(g);
+
+          return InkWell(
+            onTap: () => produkProv.toggleGejala(g),
+            borderRadius: BorderRadius.circular(18),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: isSelected ? AppColors.primary : Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: isSelected ? AppColors.primary : AppColors.border,
+                  width: 1.1,
+                ),
+              ),
+              child: Center(
+                child: Text(
+                  g,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                    color: isSelected ? Colors.white : AppColors.textPrimary,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -488,15 +567,33 @@ class _ProdukViewState extends State<ProdukView> {
               Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      p.nama,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                        color: Color(0xFF0F172A),
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          p.nama,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                            color: Color(0xFF0F172A),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (p.indikasi.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            p.indikasi,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.primary,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -628,8 +725,16 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   late TextEditingController _stokCtrl;
   late TextEditingController _edCtrl;
 
+  // Opsi Penjualan Eceran
+  bool _isEceran = false;
+  late TextEditingController _satuanEceranCtrl;
+  late TextEditingController _isiEceranCtrl;
+  late TextEditingController _hargaEceranCtrl;
+
   late String _selectedKategori;
   late String _selectedSatuan;
+  final Set<String> _selectedIndikasi = {};
+  late List<String> _availableIndikasi;
 
   final List<String> _kategoriList = [
     'Obat Bebas',
@@ -680,6 +785,15 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     }
     _selectedSatuan = initialSatuan.trim().isEmpty ? 'STRIP' : initialSatuan;
 
+    // Inisialisasi indikasi / keluhan gejala
+    if (p != null && p.indikasi.isNotEmpty) {
+      _selectedIndikasi.addAll(p.listIndikasi);
+    }
+    _availableIndikasi = {
+      ...context.read<ProdukProvider>().allAvailableGejala,
+      ..._selectedIndikasi,
+    }.toList();
+
     _hargaBeliCtrl = TextEditingController(
       text: p != null ? p.hargaBeli.toInt().toString() : '5000',
     );
@@ -693,9 +807,25 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
         "${defaultEd.year}-${defaultEd.month.toString().padLeft(2, '0')}-${defaultEd.day.toString().padLeft(2, '0')}";
     _edCtrl = TextEditingController(text: p?.tglKadaluwarsa ?? defaultEdStr);
 
+    // Eceran state initialization
+    final hasEceran = p?.hasEceranOption ?? false;
+    _isEceran = hasEceran;
+    _satuanEceranCtrl = TextEditingController(
+      text: p != null && p.satuanEceran.isNotEmpty ? p.satuanEceran : 'TABLET',
+    );
+    _isiEceranCtrl = TextEditingController(
+      text: p != null && p.isiEceran > 0 ? p.isiEceran.toString() : '10',
+    );
+    _hargaEceranCtrl = TextEditingController(
+      text: p != null && p.hargaEceran > 0 ? p.hargaEceran.toInt().toString() : '',
+    );
+
     _hargaBeliCtrl.addListener(() => setState(() {}));
     _hargaJualCtrl.addListener(() => setState(() {}));
     _kodeCtrl.addListener(() => setState(() {}));
+    _satuanEceranCtrl.addListener(() => setState(() {}));
+    _isiEceranCtrl.addListener(() => setState(() {}));
+    _hargaEceranCtrl.addListener(() => setState(() {}));
   }
 
   @override
@@ -706,6 +836,9 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     _hargaJualCtrl.dispose();
     _stokCtrl.dispose();
     _edCtrl.dispose();
+    _satuanEceranCtrl.dispose();
+    _isiEceranCtrl.dispose();
+    _hargaEceranCtrl.dispose();
     super.dispose();
   }
 
@@ -749,6 +882,265 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     });
   }
 
+  void _openPilihIndikasiBottomSheet() {
+    try {
+      final providerGejala = context.read<ProdukProvider>().allAvailableGejala;
+      for (final g in providerGejala) {
+        if (!_availableIndikasi.contains(g)) {
+          _availableIndikasi.add(g);
+        }
+      }
+    } catch (_) {}
+
+    final tempSelected = Set<String>.from(_selectedIndikasi);
+    final searchCtrl = TextEditingController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useRootNavigator: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            final query = searchCtrl.text.trim().toLowerCase();
+            final filteredList = _availableIndikasi.where((g) {
+              return g.toLowerCase().contains(query);
+            }).toList();
+
+            final hasExactMatch = _availableIndikasi.any((g) => g.toLowerCase() == query);
+            final canAddNew = query.isNotEmpty && !hasExactMatch;
+
+            return Container(
+              height: MediaQuery.of(ctx).size.height * 0.75,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: Column(
+                children: [
+                  // Handle Bar
+                  Container(
+                    margin: const EdgeInsets.only(top: 10, bottom: 6),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFCBD5E1),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+
+                  // Header
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.healing_rounded, color: AppColors.primary, size: 22),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Pilih Keluhan & Indikasi',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                              Text(
+                                '${tempSelected.length} dipilih',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded, size: 20),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1, color: AppColors.border),
+
+                  // Search Box
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    child: TextField(
+                      controller: searchCtrl,
+                      decoration: InputDecoration(
+                        hintText: 'Cari atau ketik keluhan baru...',
+                        hintStyle: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                        prefixIcon: const Icon(Icons.search_rounded, size: 20, color: AppColors.textSecondary),
+                        suffixIcon: searchCtrl.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear_rounded, size: 18),
+                                onPressed: () {
+                                  setModalState(() => searchCtrl.clear());
+                                },
+                              )
+                            : null,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        filled: true,
+                        fillColor: const Color(0xFFF8FAFC),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: const BorderSide(color: AppColors.border),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: const BorderSide(color: AppColors.border),
+                        ),
+                      ),
+                      onChanged: (_) => setModalState(() {}),
+                    ),
+                  ),
+
+                  // Tombol Tambah Baru Cepat jika belum ada di list (Disimpan ke Database)
+                  if (canAddNew)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      child: InkWell(
+                        onTap: () async {
+                          final newName = searchCtrl.text.trim();
+                          if (newName.isNotEmpty) {
+                            // Simpan langsung ke database SQLite & trigger sync
+                            await context.read<ProdukProvider>().tambahGejala(newName);
+                            setModalState(() {
+                              if (!_availableIndikasi.contains(newName)) {
+                                _availableIndikasi.insert(0, newName);
+                              }
+                              tempSelected.add(newName);
+                              searchCtrl.clear();
+                            });
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.add_circle_rounded, size: 18, color: AppColors.primary),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Tambah "${searchCtrl.text.trim()}" ke daftar keluhan',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // Daftar Gejala
+                  Expanded(
+                    child: filteredList.isEmpty && !canAddNew
+                        ? const Center(
+                            child: Text(
+                              'Keluhan tidak ditemukan',
+                              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                            ),
+                          )
+                        : ListView.separated(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                            itemCount: filteredList.length,
+                            separatorBuilder: (_, _) => const Divider(height: 1, indent: 48, color: Color(0xFFF1F5F9)),
+                            itemBuilder: (c, idx) {
+                              final item = filteredList[idx];
+                              final isChecked = tempSelected.contains(item);
+                              return CheckboxListTile(
+                                value: isChecked,
+                                activeColor: AppColors.primary,
+                                checkColor: Colors.white,
+                                dense: true,
+                                controlAffinity: ListTileControlAffinity.leading,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                                title: Text(
+                                  item,
+                                  style: TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: isChecked ? FontWeight.w600 : FontWeight.w400,
+                                    color: isChecked ? AppColors.primary : AppColors.textPrimary,
+                                  ),
+                                ),
+                                onChanged: (val) {
+                                  setModalState(() {
+                                    if (val == true) {
+                                      tempSelected.add(item);
+                                    } else {
+                                      tempSelected.remove(item);
+                                    }
+                                  });
+                                },
+                              );
+                            },
+                          ),
+                  ),
+
+                  // Bottom Action
+                  Container(
+                    padding: EdgeInsets.fromLTRB(16, 10, 16, 12 + MediaQuery.of(ctx).viewInsets.bottom),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      border: Border(top: BorderSide(color: AppColors.border)),
+                    ),
+                    child: Row(
+                      children: [
+                        if (tempSelected.isNotEmpty)
+                          TextButton(
+                            onPressed: () {
+                              setModalState(() => tempSelected.clear());
+                            },
+                            child: const Text('Reset', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                          ),
+                        const Spacer(),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _selectedIndikasi.clear();
+                              _selectedIndikasi.addAll(tempSelected);
+                            });
+                            Navigator.pop(ctx);
+                          },
+                          child: Text(
+                            tempSelected.isEmpty ? 'Simpan' : 'Terapkan (${tempSelected.length})',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   bool _isSaving = false;
 
   void _save() async {
@@ -761,16 +1153,24 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
       final id = widget.product?.id ?? 'PRD-${DateTime.now().millisecondsSinceEpoch}';
       final cleanBeli = _hargaBeliCtrl.text.replaceAll('.', '').replaceAll(',', '.').trim();
       final cleanJual = _hargaJualCtrl.text.replaceAll('.', '').replaceAll(',', '.').trim();
+      final cleanHargaEceran = _hargaEceranCtrl.text.replaceAll('.', '').replaceAll(',', '.').trim();
+      final eceranPrice = double.tryParse(cleanHargaEceran) ?? 0.0;
+      final eceranIsi = int.tryParse(_isiEceranCtrl.text.trim()) ?? 10;
+      final eceranSatuan = _isEceran ? _satuanEceranCtrl.text.trim().toUpperCase() : '';
 
       final prod = ProdukModel(
         id: id,
         kode: _kodeCtrl.text.trim(),
         nama: _namaCtrl.text.trim(),
         kategori: _selectedKategori,
+        indikasi: _selectedIndikasi.join(', '),
         hargaBeli: double.tryParse(cleanBeli) ?? 0.0,
         hargaJual: double.tryParse(cleanJual) ?? 0.0,
         stok: int.tryParse(_stokCtrl.text.trim()) ?? 0,
         satuan: _selectedSatuan,
+        satuanEceran: _isEceran ? (eceranSatuan.isNotEmpty ? eceranSatuan : 'TABLET') : '',
+        isiEceran: _isEceran ? (eceranIsi > 0 ? eceranIsi : 1) : 1,
+        hargaEceran: _isEceran ? eceranPrice : 0.0,
         tglKadaluwarsa: _edCtrl.text.trim(),
         status: 'AKTIF',
         createdAt: widget.product?.createdAt ?? DateTime.now().toIso8601String(),
@@ -1055,6 +1455,100 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 16),
+                      _buildFieldLabel('Keluhan / Indikasi Gejala'),
+                      const SizedBox(height: 6),
+                      InkWell(
+                        onTap: _openPilihIndikasiBottomSheet,
+                        borderRadius: BorderRadius.circular(10),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.healing_rounded, size: 18, color: AppColors.primary),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  _selectedIndikasi.isEmpty
+                                      ? 'Pilih keluhan / indikasi gejala...'
+                                      : '${_selectedIndikasi.length} keluhan dipilih',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: _selectedIndikasi.isEmpty ? AppColors.textSecondary : AppColors.textPrimary,
+                                    fontWeight: _selectedIndikasi.isEmpty ? FontWeight.w400 : FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: const [
+                                    Text(
+                                      'Pilih',
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primary),
+                                    ),
+                                    SizedBox(width: 2),
+                                    Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: AppColors.primary),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (_selectedIndikasi.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: _selectedIndikasi.map((gejala) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF1F5F9),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: const Color(0xFFCBD5E1)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    gejala,
+                                    style: const TextStyle(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w500,
+                                      color: AppColors.textPrimary,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 5),
+                                  InkWell(
+                                    onTap: () {
+                                      setState(() => _selectedIndikasi.remove(gejala));
+                                    },
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: const Icon(
+                                      Icons.close_rounded,
+                                      size: 13,
+                                      color: Color(0xFF64748B),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
                       const SizedBox(height: 22),
 
                       // --- SECTION 2: HARGA & MARGIN ---
@@ -1125,7 +1619,147 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                       ),
                       const SizedBox(height: 22),
 
-                      // --- SECTION 3: STOK & KEDALUWARSA ---
+                      // --- SECTION 3: PENJUALAN ECERAN ---
+                      _buildSectionTitle('Penjualan Eceran (Opsional)'),
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: _isEceran ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _isEceran ? const Color(0xFF86EFAC) : AppColors.border,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            InkWell(
+                              onTap: () => setState(() => _isEceran = !_isEceran),
+                              borderRadius: BorderRadius.circular(8),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Barang ini bisa dijual Eceran?',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.textPrimary,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Misal per butir/tablet dari 1 strip, atau per sachet dari 1 box',
+                                          style: TextStyle(
+                                            fontSize: 11.5,
+                                            color: AppColors.textSecondary,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Checkbox(
+                                    value: _isEceran,
+                                    activeColor: AppColors.primary,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                    onChanged: (val) {
+                                      setState(() => _isEceran = val ?? false);
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (_isEceran) ...[
+                              const SizedBox(height: 12),
+                              const Divider(height: 1, color: Color(0xFFCBD5E1)),
+                              const SizedBox(height: 12),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    flex: 3,
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        _buildFieldLabel('Satuan Eceran (Terkecil)'),
+                                        TextFormField(
+                                          controller: _satuanEceranCtrl,
+                                          decoration: const InputDecoration(
+                                            hintText: 'Cth: TABLET',
+                                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                                          ),
+                                          validator: (v) {
+                                            if (_isEceran && (v == null || v.trim().isEmpty)) {
+                                              return 'Wajib diisi';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    flex: 2,
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        _buildFieldLabel('Isi per $_selectedSatuan'),
+                                        TextFormField(
+                                          controller: _isiEceranCtrl,
+                                          keyboardType: TextInputType.number,
+                                          decoration: const InputDecoration(
+                                            hintText: 'Cth: 10',
+                                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                                          ),
+                                          validator: (v) {
+                                            if (_isEceran) {
+                                              final val = int.tryParse(v ?? '');
+                                              if (val == null || val <= 0) return '> 0';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              _buildFieldLabel('Harga Jual Eceran (per Satuan Terkecil)'),
+                              TextFormField(
+                                controller: _hargaEceranCtrl,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  prefixText: 'Rp ',
+                                  hintText: '0 (Otomatis dihitung jika kosong)',
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Builder(builder: (context) {
+                                final hJual = double.tryParse(_hargaJualCtrl.text.replaceAll('.', '').replaceAll(',', '')) ?? 0.0;
+                                final isi = int.tryParse(_isiEceranCtrl.text.trim()) ?? 10;
+                                final inputEceran = double.tryParse(_hargaEceranCtrl.text.replaceAll('.', '').replaceAll(',', '')) ?? 0.0;
+                                final estimasi = (isi > 0 && hJual > 0) ? (hJual / isi).round() : 0;
+                                final displayPrice = inputEceran > 0 ? inputEceran.toInt() : estimasi;
+                                final sName = _satuanEceranCtrl.text.trim().isNotEmpty ? _satuanEceranCtrl.text.trim().toUpperCase() : 'BUTIR';
+                                return Text(
+                                  'Harga eceran aktif: Rp ${CurrencyFormatter.format(displayPrice.toDouble())} per $sName ${inputEceran == 0 && estimasi > 0 ? "(dihitung otomatis dari harga jual / isi)" : ""}',
+                                  style: const TextStyle(fontSize: 11, color: AppColors.textSecondary, fontStyle: FontStyle.italic),
+                                );
+                              }),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+
+                      // --- SECTION 4: STOK & KEDALUWARSA ---
                       _buildSectionTitle('Stok & Kedaluwarsa'),
                       const SizedBox(height: 12),
 

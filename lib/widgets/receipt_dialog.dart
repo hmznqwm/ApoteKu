@@ -23,59 +23,109 @@ class ReceiptDialog extends StatefulWidget {
 }
 
 class _ReceiptDialogState extends State<ReceiptDialog> {
-  bool _isPrintingBt = false;
-  bool _isPrintingUsb = false;
+  bool _isPrinting = false;
+  bool _isConnected = false;
 
-  Future<void> _handlePrintBluetooth() async {
-    setState(() => _isPrintingBt = true);
+  @override
+  void initState() {
+    super.initState();
+    _checkPrinterStatus();
+  }
 
-    // 1. Check connection or attempt auto-connect
+  Future<void> _checkPrinterStatus() async {
     bool connected = await PrinterService.instance.checkConnection();
     if (!connected) {
       connected = await PrinterService.instance.autoConnect();
     }
-
-    // 2. If still not connected, pop up printer connection dialog!
-    if (!connected && mounted) {
-      setState(() => _isPrintingBt = false);
-      final connectedFromDialog = await PrinterConnectDialog.show(context);
-      if (connectedFromDialog != true) {
-        return; // User closed dialog without connecting
-      }
-      setState(() => _isPrintingBt = true);
-    }
-
-    // 3. Print receipt
-    final success = await PrinterService.instance.printReceipt(widget.transaction);
-
     if (mounted) {
-      setState(() => _isPrintingBt = false);
+      setState(() {
+        _isConnected = connected;
+      });
+    }
+  }
+
+  Future<void> _handleManageBluetooth() async {
+    final connected = await PrinterConnectDialog.show(context);
+    await _checkPrinterStatus();
+    if (connected == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            success
-                ? 'Struk berhasil dicetak via Bluetooth!'
-                : 'Gagal mencetak struk. Pastikan printer Bluetooth terhubung.',
-          ),
-          backgroundColor: success ? AppColors.success : AppColors.danger,
+        const SnackBar(
+          content: Text('Printer Bluetooth berhasil terhubung! Siap mencetak.'),
+          backgroundColor: AppColors.success,
+          behavior: SnackBarBehavior.floating,
         ),
       );
     }
   }
 
-  Future<void> _handlePrintUsbOrSystem() async {
-    setState(() => _isPrintingUsb = true);
-    final success = await PrinterService.instance.printUsbOrSystemReceipt(widget.transaction);
+  Future<void> _handlePrint() async {
+    if (_isPrinting) return;
+
+    setState(() => _isPrinting = true);
+
+    // 1. Periksa apakah printer sudah terhubung atau bisa auto-connect
+    bool connected = await PrinterService.instance.checkConnection();
+    if (!connected) {
+      connected = await PrinterService.instance.autoConnect();
+    }
+
     if (mounted) {
-      setState(() => _isPrintingUsb = false);
-      if (!success) {
+      setState(() => _isConnected = connected);
+    }
+
+    // 2. Jika sudah terhubung, langsung otomatis cetak ke printer termal!
+    if (connected) {
+      final success = await PrinterService.instance.printReceipt(widget.transaction);
+      if (mounted) {
+        setState(() => _isPrinting = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Gagal membuka dialog cetak USB / Dokumen.'),
-            backgroundColor: AppColors.danger,
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(
+                  success ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    success
+                        ? 'Struk berhasil dicetak ke printer termal!'
+                        : 'Gagal mencetak struk. Pastikan kertas dan baterai printer mencukupi.',
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: success ? AppColors.success : AppColors.danger,
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
+      return;
+    }
+
+    // 3. Jika belum terhubung, hanya beri notifikasi singkat tanpa pop up apapun
+    if (mounted) {
+      setState(() => _isPrinting = false);
+
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text('Printer belum terhubung! Silakan klik tombol Bluetooth terlebih dahulu.'),
+              ),
+            ],
+          ),
+          backgroundColor: Color(0xFFE11D48),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 3),
+        ),
+      );
     }
   }
 
@@ -124,11 +174,11 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                const Expanded(
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      const Text(
                         'Transaksi Berhasil',
                         style: TextStyle(
                           fontSize: 16,
@@ -137,8 +187,8 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                         ),
                       ),
                       Text(
-                        'Struk Siap Dicetak (58mm / 80mm)',
-                        style: TextStyle(
+                        'Struk Siap Dicetak (Panjang Otomatis • ${trx.details.length} Item)',
+                        style: const TextStyle(
                           fontSize: 11,
                           color: AppColors.textMuted,
                         ),
@@ -176,73 +226,125 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // 1. Header (Centered, NO LOGO)
-                      const Text(
+                      // 1. Header (Logo, Nama, Slogan, Alamat)
+                      Center(
+                        child: Image.asset(
+                          'assets/images/apotek-logo.png',
+                          height: 44,
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) => const SizedBox(height: 4),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
                         PrinterService.storeName,
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 15,
                           fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
                           color: Colors.black,
                         ),
                         textAlign: TextAlign.center,
                       ),
+                      const SizedBox(height: 1),
+                      Text(
+                        PrinterService.storeSlogan,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.3,
+                          color: Colors.black87,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
                       const SizedBox(height: 2),
-                      const Text(
+                      Text(
                         PrinterService.storeAddress,
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 11,
                           color: Colors.black87,
                         ),
                         textAlign: TextAlign.center,
                       ),
-                      const Text(
-                        PrinterService.storePhone,
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 11,
-                          color: Colors.black87,
+                      if (PrinterService.storePhone.isNotEmpty) ...[
+                        const SizedBox(height: 1),
+                        Text(
+                          PrinterService.storePhone,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                            color: Colors.black87,
+                          ),
+                          textAlign: TextAlign.center,
                         ),
-                        textAlign: TextAlign.center,
-                      ),
+                      ],
                       const SizedBox(height: 8),
 
                       // 2. Dashed Separator
                       _buildDashedLine(),
                       const SizedBox(height: 6),
 
-                      // 3. Metadata (Nomor & Tanggal, Kasir & Jam)
+                      // 3. Metadata (No. Nota, Waktu, Kasir)
                       Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
+                          const SizedBox(
+                            width: 65,
                             child: Text(
-                              'Nomor: ${trx.invoice}',
-                              style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.black),
+                              'No. Nota',
+                              style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.black87),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          Text(
-                            dateStr,
-                            style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.black),
+                          const Text(': ', style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.black87)),
+                          Expanded(
+                            child: Text(
+                              trx.invoice,
+                              style: const TextStyle(fontFamily: 'monospace', fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 2),
                       Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          const SizedBox(
+                            width: 65,
+                            child: Text(
+                              'Waktu',
+                              style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.black87),
+                            ),
+                          ),
+                          const Text(': ', style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.black87)),
                           Expanded(
                             child: Text(
-                              'Kasir: ${trx.kasirName}',
+                              '$dateStr $timeStr',
                               style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.black),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          Text(
-                            timeStr,
-                            style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.black),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 65,
+                            child: Text(
+                              'Kasir',
+                              style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.black87),
+                            ),
+                          ),
+                          const Text(': ', style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.black87)),
+                          Expanded(
+                            child: Text(
+                              trx.kasirName,
+                              style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.black),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         ],
                       ),
@@ -253,7 +355,7 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            'Keterangan',
+                            'Keterangan / Obat',
                             style: TextStyle(fontFamily: 'monospace', fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black),
                           ),
                           Text(
@@ -273,21 +375,30 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              Text(
+                                item.nama,
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black,
+                                ),
+                              ),
+                              const SizedBox(height: 1),
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Expanded(
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 8),
                                     child: Text(
-                                      item.nama,
+                                      '${item.qty} Pcs  x  ${CurrencyFormatter.formatNumber(item.harga)}',
                                       style: const TextStyle(
                                         fontFamily: 'monospace',
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.black,
+                                        fontSize: 11,
+                                        color: Colors.black87,
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(width: 8),
                                   Text(
                                     CurrencyFormatter.formatNumber(item.subtotal),
                                     style: const TextStyle(
@@ -297,17 +408,6 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                                     ),
                                   ),
                                 ],
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.only(left: 12, top: 1),
-                                child: Text(
-                                  '${item.qty} Pcs  X  ${CurrencyFormatter.formatNumber(item.harga)}',
-                                  style: const TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 11,
-                                    color: Colors.black87,
-                                  ),
-                                ),
                               ),
                             ],
                           ),
@@ -319,12 +419,12 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                       const SizedBox(height: 6),
 
                       // 6. Summary Totals (Aligned colons)
-                      _buildSummaryRow('Total', CurrencyFormatter.formatNumber(trx.total), isBold: true),
+                      _buildSummaryRow('Total Belanja', CurrencyFormatter.formatNumber(trx.total), isBold: true),
                       if (trx.diskon > 0)
                         _buildSummaryRow('Diskon', '-${CurrencyFormatter.formatNumber(trx.diskon)}'),
-                      _buildSummaryRow('Jumlah barang', '${trx.details.length} : $totalQty'),
-                      _buildSummaryRow('Bayar', CurrencyFormatter.formatNumber(trx.bayar)),
-                      _buildSummaryRow('Kembali', CurrencyFormatter.formatNumber(trx.kembalian)),
+                      _buildSummaryRow('Total Item', '$totalQty Pcs (${trx.details.length} Produk)'),
+                      _buildSummaryRow('Tunai (Bayar)', CurrencyFormatter.formatNumber(trx.bayar)),
+                      _buildSummaryRow('Kembalian', CurrencyFormatter.formatNumber(trx.kembalian)),
 
                       const SizedBox(height: 8),
                       _buildDashedLine(),
@@ -350,9 +450,9 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 3),
-                      const Text(
+                      Text(
                         PrinterService.footerThankYou,
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
@@ -367,12 +467,42 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
             ),
             const SizedBox(height: 14),
 
-            // Print Action Buttons (Bluetooth + USB / System Print + Selesai)
+            // Print Action Buttons (Bluetooth + Print + Selesai)
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
                   children: [
+                    // Tombol 1: Bluetooth
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _isConnected ? AppColors.primary : const Color(0xFF475569),
+                          backgroundColor: _isConnected ? AppColors.primary.withValues(alpha: 0.08) : Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          side: BorderSide(
+                            color: _isConnected ? AppColors.primary : const Color(0xFFCBD5E1),
+                          ),
+                        ),
+                        icon: Icon(
+                          _isConnected ? Icons.bluetooth_connected_rounded : Icons.bluetooth_rounded,
+                          size: 18,
+                          color: _isConnected ? AppColors.primary : const Color(0xFF475569),
+                        ),
+                        label: Text(
+                          _isConnected ? 'Bluetooth (Aktif)' : 'Bluetooth',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.bold,
+                            color: _isConnected ? AppColors.primary : const Color(0xFF475569),
+                          ),
+                        ),
+                        onPressed: _isPrinting ? null : _handleManageBluetooth,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    // Tombol 2: Print (Menggantikan PDF/USB)
                     Expanded(
                       child: ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
@@ -382,35 +512,15 @@ class _ReceiptDialogState extends State<ReceiptDialog> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           elevation: 0,
                         ),
-                        icon: _isPrintingBt
+                        icon: _isPrinting
                             ? const SizedBox(
                                 height: 16,
                                 width: 16,
                                 child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                               )
-                            : const Icon(Icons.bluetooth_connected_rounded, size: 18),
-                        label: const Text('Bluetooth', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                        onPressed: (_isPrintingBt || _isPrintingUsb) ? null : _handlePrintBluetooth,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          side: const BorderSide(color: AppColors.primary),
-                        ),
-                        icon: _isPrintingUsb
-                            ? const SizedBox(
-                                height: 16,
-                                width: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
                             : const Icon(Icons.print_rounded, size: 18),
-                        label: const Text('PDF / USB', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                        onPressed: (_isPrintingBt || _isPrintingUsb) ? null : _handlePrintUsbOrSystem,
+                        label: const Text('Print', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                        onPressed: _isPrinting ? null : _handlePrint,
                       ),
                     ),
                   ],

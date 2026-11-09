@@ -45,6 +45,48 @@ class DatabaseHelper {
       await db.execute("ALTER TABLE produk ADD COLUMN harga_eceran REAL DEFAULT 0");
     } catch (_) {}
     try {
+      await db.execute("ALTER TABLE produk ADD COLUMN indikasi TEXT DEFAULT ''");
+    } catch (_) {}
+    try {
+      // Inisialisasi otomatis indikasi keluhan untuk obat apotek umum jika masih kosong
+      await db.rawUpdate('''
+        UPDATE produk SET indikasi = 'Sakit Kepala, Demam, Sakit Gigi'
+        WHERE (indikasi IS NULL OR indikasi = '') AND (LOWER(nama) LIKE '%paracetamol%' OR LOWER(nama) LIKE '%panadol%' OR LOWER(nama) LIKE '%sanmol%')
+      ''');
+      await db.rawUpdate('''
+        UPDATE produk SET indikasi = 'Sakit Kepala, Demam, Flu & Batuk'
+        WHERE (indikasi IS NULL OR indikasi = '') AND (LOWER(nama) LIKE '%bodrex%' OR LOWER(nama) LIKE '%paramex%' OR LOWER(nama) LIKE '%mixagrip%')
+      ''');
+      await db.rawUpdate('''
+        UPDATE produk SET indikasi = 'Maag / Lambung'
+        WHERE (indikasi IS NULL OR indikasi = '') AND (LOWER(nama) LIKE '%promag%' OR LOWER(nama) LIKE '%mylanta%' OR LOWER(nama) LIKE '%antasida%' OR LOWER(nama) LIKE '%polysilane%')
+      ''');
+      await db.rawUpdate('''
+        UPDATE produk SET indikasi = 'Flu & Batuk'
+        WHERE (indikasi IS NULL OR indikasi = '') AND (LOWER(nama) LIKE '%komix%' OR LOWER(nama) LIKE '%obh%' OR LOWER(nama) LIKE '%siladex%' OR LOWER(nama) LIKE '%woods%')
+      ''');
+      await db.rawUpdate('''
+        UPDATE produk SET indikasi = 'Diare'
+        WHERE (indikasi IS NULL OR indikasi = '') AND (LOWER(nama) LIKE '%diapet%' OR LOWER(nama) LIKE '%entrostop%' OR LOWER(nama) LIKE '%oralit%')
+      ''');
+      await db.rawUpdate('''
+        UPDATE produk SET indikasi = 'Alergi / Gatal'
+        WHERE (indikasi IS NULL OR indikasi = '') AND (LOWER(nama) LIKE '%ctm%' OR LOWER(nama) LIKE '%cetirizine%' OR LOWER(nama) LIKE '%incidal%')
+      ''');
+      await db.rawUpdate('''
+        UPDATE produk SET indikasi = 'Nyeri Otot'
+        WHERE (indikasi IS NULL OR indikasi = '') AND (LOWER(nama) LIKE '%salonpas%' OR LOWER(nama) LIKE '%counterpain%' OR LOWER(nama) LIKE '%voltaren%')
+      ''');
+      await db.rawUpdate('''
+        UPDATE produk SET indikasi = 'Mata / Tetes'
+        WHERE (indikasi IS NULL OR indikasi = '') AND (LOWER(nama) LIKE '%insto%' OR LOWER(nama) LIKE '%rohto%' OR LOWER(nama) LIKE '%braito%')
+      ''');
+      await db.rawUpdate('''
+        UPDATE produk SET indikasi = 'Luka / P3K'
+        WHERE (indikasi IS NULL OR indikasi = '') AND (LOWER(nama) LIKE '%betadine%' OR LOWER(nama) LIKE '%rivanol%' OR LOWER(nama) LIKE '%hansaplast%')
+      ''');
+    } catch (_) {}
+    try {
       await db.execute('''
         CREATE TABLE IF NOT EXISTS activity_log (
           id TEXT PRIMARY KEY,
@@ -56,6 +98,32 @@ class DatabaseHelper {
           created_at TEXT NOT NULL
         )
       ''');
+    } catch (_) {}
+
+    try {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS gejala (
+          id TEXT PRIMARY KEY,
+          nama TEXT NOT NULL UNIQUE,
+          created_at TEXT
+        )
+      ''');
+    } catch (_) {}
+
+    try {
+      await db.execute('ALTER TABLE pembelian ADD COLUMN is_synced INTEGER DEFAULT 1');
+    } catch (_) {}
+    try {
+      await db.execute('ALTER TABLE pembelian ADD COLUMN produk_id TEXT DEFAULT ""');
+    } catch (_) {}
+    try {
+      await db.execute('ALTER TABLE pembelian ADD COLUMN qty INTEGER DEFAULT 0');
+    } catch (_) {}
+    try {
+      await db.execute('ALTER TABLE pembelian ADD COLUMN harga_beli REAL DEFAULT 0');
+    } catch (_) {}
+    try {
+      await db.execute('ALTER TABLE pembelian ADD COLUMN petugas TEXT DEFAULT ""');
     } catch (_) {}
   }
 
@@ -80,6 +148,7 @@ class DatabaseHelper {
         kode TEXT NOT NULL,
         nama TEXT NOT NULL,
         kategori TEXT DEFAULT '',
+        indikasi TEXT DEFAULT '',
         harga_beli REAL NOT NULL DEFAULT 0,
         harga_jual REAL NOT NULL DEFAULT 0,
         stok INTEGER NOT NULL DEFAULT 0,
@@ -181,25 +250,21 @@ class DatabaseHelper {
       )
     ''');
 
+    // 9. Gejala / Keluhan Penyakit Table (Tersimpan di Database)
+    await db.execute('''
+      CREATE TABLE gejala (
+        id TEXT PRIMARY KEY,
+        nama TEXT NOT NULL UNIQUE,
+        created_at TEXT
+      )
+    ''');
+
     // Inisialisasi Data Awal (Seeds)
     await _seedDatabase(db);
   }
 
   Future<void> _seedDatabase(Database db) async {
-    final now = DateTime.now().toIso8601String();
-
-    // 1. Default User (Admin Only)
-    await db.insert('users', {
-      'id': 'USR-01',
-      'email': 'admin@pos.local',
-      'name': 'Apoteker Administrator',
-      'password_hash': 'ApotekTia2026!',
-      'role': 'ADMIN',
-      'status': 'AKTIF',
-      'created_at': now,
-    });
-
-    // 2. Default settings
+    // Pengaturan awal aplikasi (Data akun pengguna & gejala diambil langsung dari database server saat sinkronisasi)
     await db.insert('settings', {
       'key': 'nama_apotek',
       'value': 'APOTEK TIA FARMA',
@@ -208,6 +273,42 @@ class DatabaseHelper {
       'key': 'alamat_apotek',
       'value': 'Pelayanan Kesehatan Keluarga',
     });
+  }
+
+  // --- GEJALA / KELUHAN DATABASE METHODS ---
+  Future<List<Map<String, dynamic>>> getGejalaList() async {
+    final db = await database;
+    return await db.query('gejala', orderBy: 'nama ASC');
+  }
+
+  Future<String> insertGejala(String nama, {String? id}) async {
+    final db = await database;
+    final cleanName = nama.trim();
+    if (cleanName.isEmpty) return '';
+
+    // Cek apakah sudah ada (case-insensitive)
+    final existing = await db.query(
+      'gejala',
+      where: 'LOWER(nama) = ?',
+      whereArgs: [cleanName.toLowerCase()],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) {
+      return existing.first['id'] as String;
+    }
+
+    final newId = id ?? 'GJ-${DateTime.now().millisecondsSinceEpoch.toString().substring(5)}';
+    await db.insert('gejala', {
+      'id': newId,
+      'nama': cleanName,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+    return newId;
+  }
+
+  Future<int> deleteGejala(String id) async {
+    final db = await database;
+    return await db.delete('gejala', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> close() async {

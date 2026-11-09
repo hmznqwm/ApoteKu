@@ -507,6 +507,33 @@ class _KasirViewState extends State<KasirView> {
     );
   }
 
+  void _onProductSelected(ProdukModel prod) {
+    if (prod.stok <= 0) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Stok ${prod.nama} habis!'),
+          backgroundColor: AppColors.danger,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    if (!prod.hasEceranOption) {
+      // Opsi A: Produk non-eceran (seperti sabun, alkes, sirup tunggal) langsung otomatis masuk keranjang (+1 Qty)
+      context.read<CartProvider>().addItem(
+        prod,
+        isEceran: false,
+        qty: 1,
+      );
+    } else {
+      // Produk dengan opsi eceran (seperti strip / box obat): Buka dialog pilihan varian & kuantiti
+      _showQuickAddUnitDialog(prod);
+    }
+  }
+
   void _handleBarcodeResult(String code) {
     final produkProv = context.read<ProdukProvider>();
     final cleanCode = code.trim();
@@ -565,7 +592,7 @@ class _KasirViewState extends State<KasirView> {
     }
 
     if (match != null && match.id.isNotEmpty) {
-      _showQuickAddUnitDialog(match);
+      _onProductSelected(match);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -595,11 +622,11 @@ class _KasirViewState extends State<KasirView> {
   }
 
 
-  void _showReceiptDialog(TransaksiModel trx) {
-    ReceiptDialog.show(context, trx);
+  Future<void> _showReceiptDialog(TransaksiModel trx) {
+    return ReceiptDialog.show(context, trx);
   }
 
-  Future<void> _processPayment() async {
+  Future<void> _processPayment({BuildContext? sheetContext}) async {
     final cartProv = context.read<CartProvider>();
     final authProv = context.read<AuthProvider>();
     final produkProv = context.read<ProdukProvider>();
@@ -624,7 +651,20 @@ class _KasirViewState extends State<KasirView> {
       _metode = 'CASH';
       _bayarCtrl.clear();
     });
-    _showReceiptDialog(trx!);
+
+    // Tutup bottom sheet keranjang jika sedang terbuka di mobile
+    if (sheetContext != null && sheetContext.mounted) {
+      Navigator.of(sheetContext).pop();
+      await Future.delayed(const Duration(milliseconds: 150));
+    }
+
+    if (trx != null && mounted) {
+      await _showReceiptDialog(trx);
+      if (mounted) {
+        // Pastikan keranjang benar-benar bersih setelah dialog struk selesai
+        context.read<CartProvider>().clearCart();
+      }
+    }
   }
 
   @override
@@ -661,6 +701,7 @@ class _KasirViewState extends State<KasirView> {
                 children: [
                   _buildTopSearchBar(),
                   _buildCategoryPills(),
+                  _buildGejalaPills(),
                   Expanded(
                     child: RefreshIndicator(
                       onRefresh: () async {
@@ -696,6 +737,7 @@ class _KasirViewState extends State<KasirView> {
       children: [
         _buildTopSearchBar(),
         _buildCategoryPills(),
+        _buildGejalaPills(),
         Expanded(
           child: RefreshIndicator(
             onRefresh: () async {
@@ -894,6 +936,86 @@ class _KasirViewState extends State<KasirView> {
     );
   }
 
+  Widget _buildGejalaPills() {
+    final produkProv = context.watch<ProdukProvider>();
+    final gejalaList = produkProv.allAvailableGejala;
+    final hasSelected = produkProv.selectedGejala.isNotEmpty;
+
+    return Container(
+      height: 36,
+      margin: const EdgeInsets.only(top: 6, bottom: 4),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: gejalaList.length + (hasSelected ? 1 : 0),
+        separatorBuilder: (context, index) => const SizedBox(width: 6),
+        itemBuilder: (context, idx) {
+          // Tombol Reset Cepat di ujung kiri jika ada filter aktif
+          if (hasSelected && idx == 0) {
+            return InkWell(
+              onTap: () => produkProv.clearGejala(),
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFCBD5E1), width: 1.0),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Icon(Icons.close_rounded, size: 14, color: Color(0xFF475569)),
+                    SizedBox(width: 4),
+                    Text(
+                      'Reset',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF475569),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          final gIdx = hasSelected ? idx - 1 : idx;
+          final g = gejalaList[gIdx];
+          final isSelected = produkProv.selectedGejala.contains(g);
+
+          return InkWell(
+            onTap: () => produkProv.toggleGejala(g),
+            borderRadius: BorderRadius.circular(18),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: isSelected ? AppColors.primary : Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: isSelected ? AppColors.primary : AppColors.border,
+                  width: 1.1,
+                ),
+              ),
+              child: Center(
+                child: Text(
+                  g,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                    color: isSelected ? Colors.white : AppColors.textPrimary,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildProductGrid({required int crossAxisCount}) {
     final produkProv = context.watch<ProdukProvider>();
     final cartProv = context.watch<CartProvider>();
@@ -951,17 +1073,7 @@ class _KasirViewState extends State<KasirView> {
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: () {
-              if (prod.stok <= 0) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Stok obat habis!'),
-                    backgroundColor: AppColors.danger,
-                    duration: Duration(milliseconds: 700),
-                  ),
-                );
-                return;
-              }
-              _showQuickAddUnitDialog(prod);
+              _onProductSelected(prod);
             },
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -970,15 +1082,33 @@ class _KasirViewState extends State<KasirView> {
                 children: [
                   // Product Name
                   Expanded(
-                    child: Text(
-                      prod.nama,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                        color: AppColors.textPrimary,
-                      ),
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          prod.nama,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: AppColors.textPrimary,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (prod.indikasi.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            prod.indikasi,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.textMuted,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -1501,7 +1631,7 @@ class _KasirViewState extends State<KasirView> {
                       return SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: canPay ? _processPayment : null,
+                          onPressed: canPay ? () => _processPayment(sheetContext: sheetContext) : null,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primary,
                             foregroundColor: Colors.white,
@@ -1549,7 +1679,11 @@ class _KasirViewState extends State<KasirView> {
             color: AppColors.surface,
             borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          child: _buildCartPanel(isTablet: false, sheetContext: ctx),
+          child: Consumer<CartProvider>(
+            builder: (consumerCtx, cart, child) {
+              return _buildCartPanel(isTablet: false, sheetContext: ctx);
+            },
+          ),
         ),
       ),
     );

@@ -149,6 +149,8 @@ class _LoginViewState extends State<LoginView> {
                     const SizedBox(height: 6),
                     TextFormField(
                       controller: _usernameCtrl,
+                      autocorrect: false,
+                      enableSuggestions: false,
                       textInputAction: TextInputAction.next,
                       style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)),
                       decoration: _buildInputDecoration(
@@ -165,6 +167,8 @@ class _LoginViewState extends State<LoginView> {
                     TextFormField(
                       controller: _passCtrl,
                       obscureText: _obscurePassword,
+                      autocorrect: false,
+                      enableSuggestions: false,
                       textInputAction: TextInputAction.done,
                       style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)),
                       onFieldSubmitted: (_) => _handleLogin(),

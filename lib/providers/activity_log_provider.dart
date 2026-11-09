@@ -1,13 +1,29 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/activity_log_model.dart';
 import '../core/database/database_helper.dart';
+import '../services/sync_service.dart';
 
 class ActivityLogProvider extends ChangeNotifier {
   List<ActivityLogModel> _logs = [];
   bool _isLoading = false;
+  StreamSubscription? _syncSub;
 
   List<ActivityLogModel> get logs => _logs;
   bool get isLoading => _isLoading;
+
+  ActivityLogProvider() {
+    fetchLogs();
+    _syncSub = SyncService.instance.onSyncComplete.listen((_) {
+      fetchLogs();
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSub?.cancel();
+    super.dispose();
+  }
 
   Future<void> fetchLogs() async {
     _isLoading = true;
@@ -48,6 +64,9 @@ class ActivityLogProvider extends ChangeNotifier {
       );
 
       await db.insert('activity_log', newLog.toMap());
+
+      // Kirim log secara asinkron ke server website
+      unawaited(SyncService.instance.pushSingleActivityLog(newLog.toMap()));
 
       // Pangkas otomatis data lama jika melebihi 100 data (Auto FIFO)
       await db.rawDelete('''

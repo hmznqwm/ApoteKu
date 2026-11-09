@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/database/database_helper.dart';
 import '../models/produk_model.dart';
 import '../models/supplier_model.dart';
+import 'printer_service.dart';
 
 enum SyncState {
   online,
@@ -49,6 +50,7 @@ class SyncService extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       _serverUrl = prefs.getString(_prefKeyUrl) ?? _defaultUrl;
+      _sessionToken = prefs.getString(_prefKeyCloudToken);
     } catch (_) {}
 
     await refreshUnsyncedCount();
@@ -64,12 +66,20 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> setServerUrl(String newUrl) async {
-    _serverUrl = newUrl.trim();
+    final trimmed = newUrl.trim();
+    if (trimmed.isNotEmpty) {
+      final uri = Uri.tryParse(trimmed);
+      if (uri == null || (!uri.isScheme('http') && !uri.isScheme('https')) || uri.host.isEmpty) {
+        throw Exception('URL server tidak valid. Format harus diawali dengan http:// atau https://');
+      }
+    }
+    _serverUrl = trimmed.isEmpty ? _defaultUrl : trimmed;
     _savedCookie = '';
     _sessionToken = null;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_prefKeyUrl, _serverUrl);
+      await prefs.remove(_prefKeyCloudToken);
     } catch (_) {}
     notifyListeners();
     await syncAll();
@@ -148,44 +158,117 @@ class SyncService extends ChangeNotifier {
     http.Response resp;
     try {
       resp = await _client.post(uri, headers: headers, body: jsonEncode(bodyData)).timeout(const Duration(seconds: 15));
+      debugPrint('[_callApi Initial] $action -> status: ${resp.statusCode}, body: ${resp.body.length > 100 ? resp.body.substring(0, 100) : resp.body}');
     } catch (e) {
+      debugPrint('[_callApi Initial Error] $e');
       throw Exception('Gagal menghubungi server web: $e');
     }
 
     // Jika response berupa HTML challenge dari InfinityFree
     if (resp.body.contains('toNumbers') && resp.body.contains('slowAES')) {
       final cookieVal = _solveChallenge(resp.body);
+      debugPrint('[_callApi Challenge] Solved cookieVal: $cookieVal');
       if (cookieVal.isNotEmpty) {
         _savedCookie = '__test=$cookieVal';
         headers['Cookie'] = _savedCookie;
         try {
           final getUri = uri.replace(queryParameters: {'i': '1'});
-          await _client.get(getUri, headers: headers).timeout(const Duration(seconds: 10));
-        } catch (_) {}
+          final getR = await _client.get(getUri, headers: headers).timeout(const Duration(seconds: 10));
+          debugPrint('[_callApi GET ?i=1] status: ${getR.statusCode}');
+        } catch (e) {
+          debugPrint('[_callApi GET ?i=1 Error] $e');
+        }
         resp = await _client.post(uri, headers: headers, body: jsonEncode(bodyData)).timeout(const Duration(seconds: 15));
+        debugPrint('[_callApi Retry] $action -> status: ${resp.statusCode}, body: ${resp.body.length > 150 ? resp.body.substring(0, 150) : resp.body}');
       }
     }
 
     try {
-      return jsonDecode(resp.body) as Map<String, dynamic>;
+      final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
+      debugPrint('[_callApi Decoded] $action -> ok: ${decoded['ok']}');
+      if (decoded['ok'] == false) {
+        final msg = decoded['message']?.toString() ?? '';
+        if (msg.contains('Token') || msg.contains('Sesi')) {
+          _sessionToken = null;
+        }
+      }
+      return decoded;
     } catch (e) {
+      debugPrint('[_callApi JSON Error] $e, Raw: ${resp.body}');
       throw Exception('Format response tidak valid dari server (${resp.statusCode})');
     }
   }
 
   // ==========================================
-  // AUTHENTICATION DENGAN AKUN DEFAULT ADMIN
+  // AUTHENTICATION DENGAN AKUN CLOUD
   // ==========================================
+
+  static const String _prefKeyCloudEmail = 'sync_cloud_email';
+  static const String _prefKeyCloudPass = 'sync_cloud_password';
+  static const String _prefKeyCloudToken = 'sync_cloud_token';
+
+  Future<void> setCloudCredentials(String email, String password) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefKeyCloudEmail, email.trim());
+      await prefs.setString(_prefKeyCloudPass, password.trim());
+      _sessionToken = null;
+    } catch (_) {}
+  }
+
+  Future<Map<String, dynamic>> loginWithCloudCredentials(String usernameOrEmail, String password) async {
+    try {
+      final res = await _callApi('auth.login', {
+        'email': usernameOrEmail.trim(),
+        'password': password.trim(),
+      });
+
+      if (res['ok'] == true && res['data'] != null) {
+        final data = res['data'] as Map<String, dynamic>;
+        if (data['token'] != null) {
+          _sessionToken = data['token']?.toString();
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(_prefKeyCloudToken, _sessionToken!);
+          await prefs.setString(_prefKeyCloudEmail, usernameOrEmail.trim());
+          await prefs.setString(_prefKeyCloudPass, password.trim());
+        }
+        return {'success': true, 'data': data};
+      } else {
+        return {
+          'success': false,
+          'isNetworkError': false,
+          'message': res['message']?.toString() ?? 'Username/email atau kata sandi tidak cocok.',
+        };
+      }
+    } catch (e) {
+      debugPrint('Cloud login attempt error: $e');
+      return {
+        'success': false,
+        'isNetworkError': true,
+        'message': e.toString(),
+      };
+    }
+  }
 
   Future<bool> loginCloud() async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+      var email = prefs.getString(_prefKeyCloudEmail);
+      var pass = prefs.getString(_prefKeyCloudPass);
+
+      if (email == null || pass == null || email.isEmpty || pass.isEmpty) {
+        email = 'admin';
+        pass = 'admin123';
+      }
+
       final res = await _callApi('auth.login', {
-        'email': 'admin@pos.local',
-        'password': 'ApotekTia2026!',
+        'email': email,
+        'password': pass,
       });
 
       if (res['ok'] == true && res['data'] != null && res['data']['token'] != null) {
-        _sessionToken = res['data']['token'];
+        _sessionToken = res['data']['token']?.toString();
+        await prefs.setString(_prefKeyCloudToken, _sessionToken!);
         return true;
       }
     } catch (_) {}
@@ -243,6 +326,31 @@ class SyncService extends ChangeNotifier {
       _statusMessage = 'Menyelaraskan data supplier...';
       notifyListeners();
       await _syncSuppliers();
+
+      // 6. Sync Pengguna / Manajemen User (Pull & Push)
+      _statusMessage = 'Menyelaraskan data pengguna...';
+      notifyListeners();
+      await _syncUsers();
+
+      // 7. Sync Audit Trail & Monitoring Aktivitas (Pull & Push)
+      _statusMessage = 'Menyelaraskan log monitoring...';
+      notifyListeners();
+      await _syncActivityLogs();
+
+      // 8. Sync Gejala / Keluhan Obat (Pull & Push)
+      _statusMessage = 'Menyelaraskan data gejala obat...';
+      notifyListeners();
+      await _syncGejala();
+
+      // 9. Sync Pengadaan / Faktur Pembelian (Pull & Push)
+      _statusMessage = 'Menyelaraskan data pengadaan...';
+      notifyListeners();
+      await _syncPembelian();
+
+      // 10. Sync Pengaturan Profil & Identitas Apotek (Pull)
+      _statusMessage = 'Menyelaraskan profil apotek...';
+      notifyListeners();
+      await _pullCloudSettings();
 
       _lastSyncTime = DateTime.now();
       await refreshUnsyncedCount();
@@ -394,13 +502,50 @@ class SyncService extends ChangeNotifier {
                 });
               }
             } else {
-              // Pastikan status sinkronisasi lokal ter-update
-              await txn.update(
-                'transaksi',
-                {'is_synced': 1},
-                where: 'id = ? OR invoice = ?',
-                whereArgs: [id, invoice],
-              );
+              // Jika transaksi sudah ada secara lokal, cek apakah ada perubahan status (misal: REFUND dari cloud)
+              final localStatus = exist.first['status']?.toString() ?? 'SELESAI';
+              final cloudStatus = tx['status']?.toString() ?? 'SELESAI';
+
+              if (cloudStatus == 'HAPUS') {
+                await txn.delete('transaksi_detail', where: 'transaksi_id = ? OR invoice = ?', whereArgs: [id, invoice]);
+                await txn.delete('transaksi', where: 'id = ? OR invoice = ?', whereArgs: [id, invoice]);
+                continue;
+              }
+
+              if (cloudStatus != localStatus) {
+                await txn.update(
+                  'transaksi',
+                  {'status': cloudStatus, 'is_synced': 1},
+                  where: 'id = ? OR invoice = ?',
+                  whereArgs: [id, invoice],
+                );
+
+                // Jika cloud mengubah status menjadi REFUND dan lokal belum REFUND, kembalikan stok obat lokal
+                if (cloudStatus == 'REFUND' && localStatus != 'REFUND') {
+                  final details = await txn.query(
+                    'transaksi_detail',
+                    where: 'transaksi_id = ? OR invoice = ?',
+                    whereArgs: [id, invoice],
+                  );
+                  for (final d in details) {
+                    final prodId = d['produk_id']?.toString() ?? '';
+                    final qty = (d['qty'] as num?)?.toInt() ?? 0;
+                    if (prodId.isNotEmpty && qty > 0) {
+                      await txn.rawUpdate(
+                        'UPDATE produk SET stok = stok + ? WHERE id = ?',
+                        [qty, prodId],
+                      );
+                    }
+                  }
+                }
+              } else {
+                await txn.update(
+                  'transaksi',
+                  {'is_synced': 1},
+                  where: 'id = ? OR invoice = ?',
+                  whereArgs: [id, invoice],
+                );
+              }
             }
           }
         });
@@ -430,7 +575,8 @@ class SyncService extends ChangeNotifier {
             limit: 1,
           );
 
-          final map = {
+          final cloudIndikasi = p['indikasi']?.toString();
+          final map = <String, dynamic>{
             'id': id,
             'kode': kode,
             'nama': p['nama']?.toString() ?? '',
@@ -439,9 +585,19 @@ class SyncService extends ChangeNotifier {
             'harga_jual': (p['harga_jual'] as num?)?.toDouble() ?? 0.0,
             'stok': (p['stok'] as num?)?.toInt() ?? 0,
             'satuan': p['satuan']?.toString() ?? 'PCS',
+            'satuan_eceran': p['satuan_eceran']?.toString() ?? p['satuanEceran']?.toString() ?? '',
+            'isi_eceran': (p['isi_eceran'] as num?)?.toInt() ?? (p['isiEceran'] as num?)?.toInt() ?? 1,
+            'harga_eceran': (p['harga_eceran'] as num?)?.toDouble() ?? (p['hargaEceran'] as num?)?.toDouble() ?? 0.0,
+            'tgl_kadaluwarsa': p['tgl_kadaluwarsa']?.toString() ?? p['tgl_expired']?.toString(),
             'status': p['status']?.toString() ?? 'AKTIF',
             'created_at': p['created_at']?.toString() ?? now,
           };
+
+          if (cloudIndikasi != null && cloudIndikasi.isNotEmpty) {
+            map['indikasi'] = cloudIndikasi;
+          } else if (exist.isNotEmpty && exist.first['indikasi'] != null) {
+            map['indikasi'] = exist.first['indikasi'];
+          }
 
           if (exist.isNotEmpty) {
             await txn.update(
@@ -471,6 +627,7 @@ class SyncService extends ChangeNotifier {
               'kode': prod.kode,
               'nama': prod.nama,
               'kategori': prod.kategori,
+              'indikasi': prod.indikasi,
               'harga_beli': prod.hargaBeli,
               'harga_jual': prod.hargaJual,
               'stok': prod.stok,
@@ -589,6 +746,368 @@ class SyncService extends ChangeNotifier {
       }
       if (_sessionToken != null) {
         await _callApi('supplier.delete', {'id': id});
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _syncUsers() async {
+    final db = await DatabaseHelper.instance.database;
+
+    // 1. Tarik pengguna terbaru dari cloud (Pull)
+    try {
+      final res = await _callApi('sync.pullUsers');
+      if (res['ok'] == true && res['data'] != null) {
+        final List<dynamic> users = res['data']['users'] ?? [];
+        for (var u in users) {
+          final id = u['id']?.toString() ?? '';
+          final email = u['email']?.toString() ?? '';
+          if (id.isEmpty || email.isEmpty) continue;
+
+          final exist = await db.query(
+            'users',
+            where: 'id = ? OR email = ?',
+            whereArgs: [id, email],
+            limit: 1,
+          );
+          final passHash = u['password_hash']?.toString() ?? '';
+
+          if (exist.isEmpty) {
+            await db.insert('users', {
+              'id': id,
+              'name': u['name']?.toString() ?? 'Staf',
+              'email': email,
+              'role': u['role']?.toString() ?? 'KASIR',
+              'status': u['status']?.toString() ?? 'AKTIF',
+              'password_hash': passHash.isNotEmpty
+                  ? passHash
+                  : 'f3c6fe4bbd0bf5348ebdfa71d5654db30e7aeb5bafced73074e835d5e693645b',
+              'created_at': u['created_at']?.toString() ?? DateTime.now().toIso8601String(),
+            });
+          } else {
+            final updateData = <String, dynamic>{
+              'name': u['name']?.toString() ?? exist.first['name'],
+              'role': u['role']?.toString() ?? exist.first['role'],
+              'status': u['status']?.toString() ?? exist.first['status'],
+            };
+            if (passHash.isNotEmpty) {
+              updateData['password_hash'] = passHash;
+            }
+            await db.update('users', updateData, where: 'id = ?', whereArgs: [exist.first['id']]);
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 2. Unggah data pengguna lokal ke cloud (Push)
+    try {
+      final localUsers = await db.query('users');
+      if (localUsers.isNotEmpty) {
+        await _callApi('sync.pushUsers', {
+          'users': localUsers.map((u) => {
+            'id': u['id'],
+            'email': u['email'],
+            'name': u['name'],
+            'role': u['role'],
+            'status': u['status'],
+            'password_hash': u['password_hash'],
+          }).toList(),
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _syncActivityLogs() async {
+    final db = await DatabaseHelper.instance.database;
+
+    // 1. Unggah log aktivitas lokal ke cloud (Push)
+    try {
+      final localLogs = await db.query('activity_log', orderBy: 'created_at DESC', limit: 50);
+      if (localLogs.isNotEmpty) {
+        await _callApi('sync.pushActivityLogs', {
+          'logs': localLogs.map((l) => {
+            'id': l['id'],
+            'user_name': l['user_name'],
+            'user_role': l['user_role'],
+            'action_type': l['action_type'],
+            'title': l['title'],
+            'details': l['details'],
+            'created_at': l['created_at'],
+          }).toList(),
+        });
+      }
+    } catch (_) {}
+
+    // 2. Tarik log aktivitas terbaru dari cloud (Pull)
+    try {
+      final res = await _callApi('sync.pullActivityLogs');
+      if (res['ok'] == true && res['data'] != null) {
+        final List<dynamic> logs = res['data']['logs'] ?? [];
+        for (var l in logs) {
+          final id = l['id']?.toString() ?? '';
+          if (id.isEmpty) continue;
+
+          final exist = await db.query('activity_log', where: 'id = ?', whereArgs: [id], limit: 1);
+          if (exist.isEmpty) {
+            final actionType = l['action_type']?.toString() ?? 'TAMBAH';
+            final module = l['module']?.toString() ?? '';
+            final itemName = l['item_name']?.toString() ?? '';
+            final description = l['description']?.toString() ?? '';
+
+            String title = itemName.isNotEmpty ? itemName : module;
+            if (title.isEmpty) title = 'Aktivitas $actionType';
+
+            await db.insert('activity_log', {
+              'id': id,
+              'user_name': l['user_name']?.toString() ?? 'Sistem',
+              'user_role': l['user_role']?.toString() ?? 'KASIR',
+              'action_type': actionType,
+              'title': title,
+              'details': description,
+              'created_at': l['created_at']?.toString() ?? DateTime.now().toIso8601String(),
+            });
+          }
+        }
+
+        // Pangkas otomatis log lokal agar tetap ringan (maksimal 100 log)
+        await db.rawDelete('''
+          DELETE FROM activity_log 
+          WHERE id NOT IN (
+            SELECT id FROM activity_log 
+            ORDER BY created_at DESC 
+            LIMIT 100
+          )
+        ''');
+      }
+    } catch (_) {}
+  }
+
+  Future<void> pushSingleUser(Map<String, dynamic> userMap, [String? rawPassword]) async {
+    try {
+      if (_sessionToken == null) await loginCloud();
+      if (_sessionToken != null) {
+        final payload = Map<String, dynamic>.from(userMap);
+        if (rawPassword != null && rawPassword.isNotEmpty) {
+          payload['password'] = rawPassword;
+        }
+        await _callApi('sync.pushUsers', {
+          'users': [payload],
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> deleteCloudUser(String userId) async {
+    try {
+      if (_sessionToken == null) await loginCloud();
+      if (_sessionToken != null) {
+        await _callApi('user.delete', {'id': userId});
+      }
+    } catch (_) {}
+  }
+
+  Future<void> pushSingleActivityLog(Map<String, dynamic> logMap) async {
+    try {
+      if (_sessionToken == null) await loginCloud();
+      if (_sessionToken != null) {
+        await _callApi('sync.pushActivityLogs', {
+          'logs': [logMap],
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> pushRefund(String transaksiId) async {
+    try {
+      if (_sessionToken == null) await loginCloud();
+      final db = await DatabaseHelper.instance.database;
+      final res = await db.query('transaksi', where: 'id = ?', whereArgs: [transaksiId], limit: 1);
+      if (res.isNotEmpty) {
+        final invoice = res.first['invoice']?.toString() ?? transaksiId;
+        // Panggil endpoint transaksi.refund di cloud
+        if (_sessionToken != null) {
+          await _callApi('transaksi.refund', {'id': invoice});
+        }
+        // Pastikan pushTransaksi juga mengunggah perubahan transaksi
+        await _pushUnsyncedTransactions();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _syncGejala() async {
+    final db = await DatabaseHelper.instance.database;
+
+    // 1. Pull data gejala dari cloud
+    try {
+      final res = await _callApi('sync.pullGejala');
+      if (res['ok'] == true && res['data'] != null) {
+        final List<dynamic> gejalas = res['data'] is List ? res['data'] : (res['data']['gejala'] ?? []);
+        final now = DateTime.now().toIso8601String();
+
+        await db.transaction((txn) async {
+          for (var g in gejalas) {
+            final id = g['id']?.toString() ?? '';
+            final nama = (g['nama'] ?? g['namaGejala'] ?? '')?.toString().trim() ?? '';
+            if (nama.isEmpty) continue;
+
+            final exist = await txn.query(
+              'gejala',
+              where: 'LOWER(nama) = ? OR id = ?',
+              whereArgs: [nama.toLowerCase(), id],
+              limit: 1,
+            );
+
+            if (exist.isEmpty) {
+              await txn.insert('gejala', {
+                'id': id.isNotEmpty ? id : 'GJ-${DateTime.now().millisecondsSinceEpoch}',
+                'nama': nama,
+                'created_at': now,
+              });
+            }
+          }
+        });
+      }
+    } catch (_) {}
+
+    // 2. Push data gejala lokal ke cloud
+    try {
+      final localGejala = await db.query('gejala');
+      if (localGejala.isNotEmpty) {
+        await _callApi('sync.pushGejala', {
+          'gejala': localGejala.map((g) => {
+            'id': g['id'],
+            'nama': g['nama'],
+          }).toList(),
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> pushGejala(String nama, String id) async {
+    try {
+      if (_sessionToken == null) await loginCloud();
+      if (_sessionToken != null) {
+        await _callApi('gejala.save', {
+          'id': id,
+          'nama': nama,
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _syncPembelian() async {
+    final db = await DatabaseHelper.instance.database;
+
+    // 1. Pull data pembelian dari cloud
+    try {
+      final res = await _callApi('sync.pullPembelian');
+      if (res['ok'] == true && res['data'] != null) {
+        final List<dynamic> items = res['data']['pembelian'] ?? [];
+        await db.transaction((txn) async {
+          for (var item in items) {
+            final id = item['id']?.toString() ?? '';
+            final noPo = item['no_po']?.toString() ?? item['no_faktur']?.toString() ?? '';
+            if (id.isEmpty && noPo.isEmpty) continue;
+
+            final exist = await txn.query(
+              'pembelian',
+              where: 'id = ? OR no_po = ?',
+              whereArgs: [id, noPo],
+              limit: 1,
+            );
+
+            final map = <String, dynamic>{
+              'id': id.isNotEmpty ? id : noPo,
+              'no_po': noPo,
+              'supplier_id': item['supplier_id']?.toString() ?? '',
+              'supplier_nama': item['supplier_nama']?.toString() ?? 'Supplier',
+              'produk_id': item['produk_id']?.toString() ?? '',
+              'qty': (item['qty'] as num?)?.toInt() ?? 0,
+              'harga_beli': (item['harga_beli'] as num?)?.toDouble() ?? 0.0,
+              'total': (item['total'] as num?)?.toDouble() ?? 0.0,
+              'tanggal': item['tanggal']?.toString() ?? '',
+              'petugas': item['petugas']?.toString() ?? '',
+              'status': item['status']?.toString() ?? 'LUNAS',
+              'created_at': item['created_at']?.toString() ?? DateTime.now().toIso8601String(),
+              'is_synced': 1,
+            };
+
+            if (exist.isEmpty) {
+              await txn.insert('pembelian', map);
+            } else {
+              await txn.update(
+                'pembelian',
+                map,
+                where: 'id = ?',
+                whereArgs: [exist.first['id']],
+              );
+            }
+          }
+        });
+      }
+    } catch (_) {}
+
+    // 2. Push data pembelian lokal yang belum disinkronkan ke cloud
+    try {
+      final unsynced = await db.query(
+        'pembelian',
+        where: 'is_synced = 0',
+      );
+      if (unsynced.isNotEmpty) {
+        final res = await _callApi('sync.pushPembelian', {
+          'pembelian': unsynced.map((p) => {
+            'id': p['id'],
+            'no_po': p['no_po'],
+            'no_faktur': p['no_po'],
+            'supplier_id': p['supplier_id'],
+            'supplier_nama': p['supplier_nama'],
+            'produk_id': p['produk_id'],
+            'qty': p['qty'],
+            'harga_beli': p['harga_beli'],
+            'total': p['total'],
+            'tanggal': p['tanggal'],
+            'petugas': p['petugas'],
+            'status': p['status'],
+            'created_at': p['created_at'],
+          }).toList(),
+        });
+        if (res['ok'] == true) {
+          for (var p in unsynced) {
+            await db.update(
+              'pembelian',
+              {'is_synced': 1},
+              where: 'id = ?',
+              whereArgs: [p['id']],
+            );
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _pullCloudSettings() async {
+    try {
+      final res = await _callApi('sync.pullSettings');
+      if (res['ok'] == true && res['data'] != null) {
+        final settings = res['data']['settings'] as Map<String, dynamic>?;
+        if (settings != null) {
+          final prefs = await SharedPreferences.getInstance();
+          if (settings['nama_apotek'] != null && settings['nama_apotek'].toString().isNotEmpty) {
+            await prefs.setString('setting_nama_apotek', settings['nama_apotek'].toString());
+          }
+          if (settings['slogan_apotek'] != null && settings['slogan_apotek'].toString().isNotEmpty) {
+            await prefs.setString('setting_slogan_apotek', settings['slogan_apotek'].toString());
+          }
+          if (settings['alamat_apotek'] != null && settings['alamat_apotek'].toString().isNotEmpty) {
+            await prefs.setString('setting_alamat_apotek', settings['alamat_apotek'].toString());
+          }
+          if (settings['telepon_apotek'] != null) {
+            await prefs.setString('setting_telepon_apotek', settings['telepon_apotek'].toString());
+          }
+          if (settings['footer_struk'] != null && settings['footer_struk'].toString().isNotEmpty) {
+            await prefs.setString('setting_footer_struk', settings['footer_struk'].toString());
+          }
+          await PrinterService.loadStoreInfoFromPrefs();
+        }
       }
     } catch (_) {}
   }

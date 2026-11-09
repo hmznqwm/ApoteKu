@@ -6,8 +6,7 @@ plugins {
 
 android {
     namespace = "com.antikafarma.apotek_app"
-    compileSdk = 37
-    ndkVersion = flutter.ndkVersion
+    compileSdk = 36
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

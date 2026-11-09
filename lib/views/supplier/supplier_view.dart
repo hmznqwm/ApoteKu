@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -22,15 +23,20 @@ class _SupplierViewState extends State<SupplierView> {
   List<SupplierModel> _filteredSuppliers = [];
   bool _isLoading = true;
   final _searchCtrl = TextEditingController();
+  StreamSubscription? _syncSub;
 
   @override
   void initState() {
     super.initState();
     _loadSuppliers();
+    _syncSub = SyncService.instance.onSyncComplete.listen((_) {
+      if (mounted) _loadSuppliers();
+    });
   }
 
   @override
   void dispose() {
+    _syncSub?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }

@@ -281,29 +281,22 @@ class _DashboardViewState extends State<DashboardView> {
           if (lowStockItems.isEmpty)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
               decoration: BoxDecoration(
                 color: const Color(0xFFF0FDF4),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFBBF7D0)),
+                borderRadius: BorderRadius.circular(10),
               ),
-              child: const Column(
+              child: const Row(
                 children: [
-                  Icon(Icons.task_alt_rounded, color: Color(0xFF16A34A), size: 36),
-                  SizedBox(height: 8),
+                  Icon(Icons.check_circle_outline_rounded, color: Color(0xFF16A34A), size: 18),
+                  SizedBox(width: 8),
                   Text(
-                    'Tidak Ada Obat Menipis',
+                    'Semua stok aman',
                     style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
                       color: Color(0xFF15803D),
                     ),
-                  ),
-                  SizedBox(height: 3),
-                  Text(
-                    'Semua persediaan obat masih berada di atas ambang minimum (stok > 5).',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12, color: Color(0xFF166534)),
                   ),
                 ],
               ),

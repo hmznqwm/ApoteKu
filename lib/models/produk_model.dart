@@ -3,6 +3,7 @@ class ProdukModel {
   final String kode;
   final String nama;
   final String kategori;
+  final String indikasi; // Tag keluhan/gejala (cth: "Sakit Kepala, Demam")
   final double hargaBeli;
   final double hargaJual;
   final int stok;
@@ -19,6 +20,7 @@ class ProdukModel {
     required this.kode,
     required this.nama,
     required this.kategori,
+    this.indikasi = '',
     required this.hargaBeli,
     required this.hargaJual,
     required this.stok,
@@ -37,6 +39,7 @@ class ProdukModel {
       kode: map['kode']?.toString() ?? '',
       nama: map['nama']?.toString() ?? '',
       kategori: map['kategori']?.toString() ?? 'Umum',
+      indikasi: map['indikasi']?.toString() ?? '',
       hargaBeli: (map['harga_beli'] as num?)?.toDouble() ?? 0.0,
       hargaJual: (map['harga_jual'] as num?)?.toDouble() ?? 0.0,
       stok: (map['stok'] as num?)?.toInt() ?? 0,
@@ -56,6 +59,7 @@ class ProdukModel {
       'kode': kode,
       'nama': nama,
       'kategori': kategori,
+      'indikasi': indikasi,
       'harga_beli': hargaBeli,
       'harga_jual': hargaJual,
       'stok': stok,
@@ -131,11 +135,22 @@ class ProdukModel {
   bool get isCriticalExpiry => daysUntilExpiry > 0 && daysUntilExpiry <= 30;
   bool get isNearExpiry => daysUntilExpiry > 30 && daysUntilExpiry <= 90;
 
+  // Daftar indikasi / keluhan penyakit sebagai List terpisah
+  List<String> get listIndikasi {
+    if (indikasi.trim().isEmpty) return const [];
+    return indikasi
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
   ProdukModel copyWith({
     String? id,
     String? kode,
     String? nama,
     String? kategori,
+    String? indikasi,
     double? hargaBeli,
     double? hargaJual,
     int? stok,
@@ -152,6 +167,7 @@ class ProdukModel {
       kode: kode ?? this.kode,
       nama: nama ?? this.nama,
       kategori: kategori ?? this.kategori,
+      indikasi: indikasi ?? this.indikasi,
       hargaBeli: hargaBeli ?? this.hargaBeli,
       hargaJual: hargaJual ?? this.hargaJual,
       stok: stok ?? this.stok,

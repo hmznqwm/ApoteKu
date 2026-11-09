@@ -1,4 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +9,7 @@ import '../../core/database/database_helper.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/responsive_layout.dart';
 import '../../providers/auth_provider.dart';
+import '../../services/sync_service.dart';
 import '../../widgets/app_confirm_dialog.dart';
 
 class UserManagementView extends StatefulWidget {
@@ -21,17 +25,25 @@ class _UserManagementViewState extends State<UserManagementView> {
   bool _isLoading = true;
   String _searchQuery = '';
   String _selectedRoleFilter = 'SEMUA'; // SEMUA, ADMIN, KASIR
+  StreamSubscription? _syncSub;
 
   final TextEditingController _searchCtrl = TextEditingController();
+
+  String _hashPassword(String raw) => sha256.convert(utf8.encode(raw)).toString();
 
   @override
   void initState() {
     super.initState();
     _loadUsers();
+    _syncSub = SyncService.instance.onSyncComplete.listen((_) {
+      if (mounted) _loadUsers();
+    });
+    unawaited(SyncService.instance.syncAll());
   }
 
   @override
   void dispose() {
+    _syncSub?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -326,15 +338,17 @@ class _UserManagementViewState extends State<UserManagementView> {
                               }
 
                               final newId = 'USR-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
-                              await db.insert('users', {
+                              final newUserMap = {
                                 'id': newId,
                                 'name': nameCtrl.text.trim(),
                                 'email': emailCtrl.text.trim().toLowerCase(),
-                                'password_hash': passCtrl.text.trim(),
+                                'password_hash': _hashPassword(passCtrl.text.trim()),
                                 'role': selectedRole,
                                 'status': selectedStatus,
                                 'created_at': now,
-                              });
+                              };
+                              await db.insert('users', newUserMap);
+                              unawaited(SyncService.instance.pushSingleUser(newUserMap, passCtrl.text.trim()));
                             } else {
                               final Map<String, dynamic> updateData = {
                                 'name': nameCtrl.text.trim(),
@@ -343,7 +357,7 @@ class _UserManagementViewState extends State<UserManagementView> {
                                 'status': selectedStatus,
                               };
                               if (passCtrl.text.trim().isNotEmpty) {
-                                updateData['password_hash'] = passCtrl.text.trim();
+                                updateData['password_hash'] = _hashPassword(passCtrl.text.trim());
                               }
 
                               await db.update(
@@ -352,6 +366,11 @@ class _UserManagementViewState extends State<UserManagementView> {
                                 where: 'id = ?',
                                 whereArgs: [user['id']],
                               );
+                              final fullUpdated = Map<String, dynamic>.from(user)..addAll(updateData);
+                              unawaited(SyncService.instance.pushSingleUser(
+                                fullUpdated,
+                                passCtrl.text.trim().isNotEmpty ? passCtrl.text.trim() : null,
+                              ));
                             }
 
                             if (ctx.mounted) Navigator.pop(ctx);
@@ -540,12 +559,17 @@ class _UserManagementViewState extends State<UserManagementView> {
                             if (!formKey.currentState!.validate()) return;
                             final messenger = ScaffoldMessenger.of(context);
                             final db = await DatabaseHelper.instance.database;
+                            final passHash = _hashPassword(passCtrl.text.trim());
                             await db.update(
                               'users',
-                              {'password_hash': passCtrl.text.trim()},
+                              {'password_hash': passHash},
                               where: 'id = ?',
                               whereArgs: [user['id']],
                             );
+                            final updatedUser = Map<String, dynamic>.from(user)
+                              ..['password_hash'] = passHash;
+                            unawaited(SyncService.instance.pushSingleUser(updatedUser, passCtrl.text.trim()));
+
                             if (ctx.mounted) Navigator.pop(ctx);
                             if (mounted) {
                               messenger.showSnackBar(
@@ -600,6 +624,7 @@ class _UserManagementViewState extends State<UserManagementView> {
         where: 'id = ?',
         whereArgs: [user['id']],
       );
+      unawaited(SyncService.instance.deleteCloudUser(user['id'].toString()));
       if (mounted) {
         _loadUsers();
         ScaffoldMessenger.of(context).showSnackBar(
@@ -615,6 +640,34 @@ class _UserManagementViewState extends State<UserManagementView> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
+    if (auth.currentUser?.isAdmin != true) {
+      return const Scaffold(
+        backgroundColor: AppColors.background,
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.gpp_bad_rounded, size: 64, color: Color(0xFFEF4444)),
+              SizedBox(height: 16),
+              Text(
+                'Akses Dibatasi',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+              ),
+              SizedBox(height: 8),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  'Hanya pengguna dengan peran Administrator yang diizinkan mengelola data staf dan hak akses.',
+                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final currentUserId = auth.currentUser?.id ?? '';
     final adminCount = _users
         .where((u) => (u['role'] ?? '').toString().toUpperCase() == 'ADMIN')
@@ -648,7 +701,10 @@ class _UserManagementViewState extends State<UserManagementView> {
               child: const Icon(Icons.add_rounded),
             ),
       body: RefreshIndicator(
-        onRefresh: _loadUsers,
+        onRefresh: () async {
+          await SyncService.instance.syncAll();
+          await _loadUsers();
+        },
         child: Scrollbar(
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -997,6 +1053,8 @@ class _UserManagementViewState extends State<UserManagementView> {
       where: 'id = ?',
       whereArgs: [user['id']],
     );
+    final fullUpdated = Map<String, dynamic>.from(user)..['status'] = newStatus;
+    unawaited(SyncService.instance.pushSingleUser(fullUpdated));
     _loadUsers();
 
     if (mounted) {

@@ -141,7 +141,6 @@ class TransaksiProvider extends ChangeNotifier {
         'transaksi',
         where: 'id = ?',
         whereArgs: [transaksiId],
-        columns: ['status'],
       );
       if (existing.isEmpty) return false;
       if ((existing.first['status'] as String?) == 'REFUND') return false;
@@ -165,13 +164,30 @@ class TransaksiProvider extends ChangeNotifier {
         }
       }
 
-      // Ubah status transaksi menjadi REFUND
+      // Ubah status transaksi menjadi REFUND dan tandai is_synced = 0 agar terkirim ke website
       await db.update(
         'transaksi',
-        {'status': 'REFUND'},
+        {'status': 'REFUND', 'is_synced': 0},
         where: 'id = ?',
         whereArgs: [transaksiId],
       );
+
+      // Catat log aktivitas refund secara lokal
+      final invoice = existing.first['invoice']?.toString() ?? transaksiId;
+      final kasirName = existing.first['kasir_name']?.toString() ?? 'Staf Kasir';
+      final total = (existing.first['total'] as num?)?.toDouble() ?? 0.0;
+      await db.insert('activity_log', {
+        'id': 'LOG-${DateTime.now().millisecondsSinceEpoch}',
+        'user_name': kasirName,
+        'user_role': 'KASIR',
+        'action_type': 'REFUND',
+        'title': 'Refund Transaksi #$invoice',
+        'details': 'Refund transaksi senilai Rp ${NumberFormat('#,###', 'id_ID').format(total)} (stok obat dikembalikan)',
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      // Picu langsung sinkronisasi refund ke server website
+      unawaited(SyncService.instance.pushRefund(transaksiId));
 
       await loadTransactions();
       return true;
